@@ -1,2 +1,3 @@
 exit = "Escape"
 new_window = "n"
+close_window = "x"

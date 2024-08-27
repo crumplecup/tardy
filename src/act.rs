@@ -19,6 +19,12 @@ use convert_case::Casing;
 /// and will warn the user if no mappings return and substitute a default configuration instead.
 ///
 /// Modifers are not currently supported, so only use single characters as `value` arguments.
+///
+/// ## Update 0.1.1
+///
+/// The `Act` enum now includes a `CloseWindow` variant, indicating the user intent to close the
+/// window.  Once we successfully created background processes to spawn new windows, the need to
+/// subsequently close windows became clear.
 #[derive(
     Debug,
     Default,
@@ -34,6 +40,8 @@ use convert_case::Casing;
     serde::Deserialize,
 )]
 pub enum Act {
+    /// The `CloseWindow` variant indicates the user would like to close the current window.
+    CloseWindow,
     /// The `Exit` variant indicates the user would like to close the current window.
     Exit,
     /// The `NewWindow` variant indicates the user would like to create a new window.

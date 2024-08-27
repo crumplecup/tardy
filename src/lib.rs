@@ -9,6 +9,7 @@
 //! link list to documentation written explicity for your consumption:
 //!
 //! 1. Creating Windows with Tardy - [`App`]
+//!     * [`App::new`]
 //!     * [`App::create_window`]
 //!     * [`App::load_config`]
 //!     * [`App::load_cmds`]
@@ -46,14 +47,18 @@
 //! other building blocks from the `trpl` repository.
 mod act;
 mod app;
+mod arrive;
 mod cmd;
+mod imp;
 mod lens;
 mod utils;
 
-/// Since this is a small application, we lift all user-facing data types and functions to the parent namespace
-/// for ease of access.
+// Since this is a small application, we lift all user-facing data types and functions to the parent namespace
+// for ease of access.
 pub use act::Act;
-pub use app::App;
+pub use app::{App, Frame, FRAMES, FRAME_POOL, MIN_SPAN};
+pub use arrive::{Arrive, Blame, Excuse};
 pub use cmd::Cmd;
+pub use imp::{Filch, Hijinks, Imp, ImpKing, Meddle, Quote, Quotes};
 pub use lens::Lens;
 pub use utils::trace_init;
