@@ -6,15 +6,32 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time;
 use winit::event_loop;
 
-/// The purpose of the `Imp` struct is to perform application actions without the user's consent.
+/// The `imp` module holds data types and methods for causing hijinks.
 ///
-/// The `Imp` will perform its actions from a separate task.  For this reason, I am reluctant to
-/// pass any mutable references to [`crate::App`].  First, I do not want to have to synchronize access to
-/// `App` with some sort of atomics or mutex.  That seems unnecessary for some light hijinks.
-/// Second, I do not want to run into any issues taking multiple mutable references to `App`.
+/// # Making Hijinks with Imps #
 ///
-/// Instead, we will make the `App` struct complicit in the hijinks of the `Imp` using message
-/// passing.  The `Imp` will hold the transmitter and the `App` will hold the receiver.
+/// The `Imp` struct plays the roll of the async "worker" or "actor", operating on tasks in the
+/// background, yielding when polite. Imagine an awesome tomorrow when these worker processes are
+/// performing useful tasks for the user, and an Imp is what you get when the programmer can't do
+/// anything useful yet.  An async process without a purpose is nothing more than a nuisance, and
+/// so the Imp can only aspire to trivial annoyance.
+///
+/// From the main `App`, we summon an [`ImpKing`] during the
+/// [`winit::application::ApplicationHandler::resumed`] event.  This application targets platform
+/// PCs, specifically \**ahem*\* my home linux machine and my work Windows machine, where the
+/// `resumed` method runs only on initialization.  If you are foolish enough to leave this program
+/// running and put the machine to sleep, and wake it up again, maybe you would get another
+/// `ImpKing`?.  Don't do that.
+///
+/// The `ImpKing` summons [`crate::IMPS`] number of [`Imp`] instances, spawning an async task for
+/// each to run in the background.  Then the `ImpKing` settles back and waits for messages from the
+/// imps.  When a new message arrives, the `ImpKing` sends it to main event loop using the proxy,
+/// where the main `App` instance can dispatch a handler to the event.
+///
+/// When an [`Imp`] runs out [`Frame`] instances, it sends a message asking for more frames,
+/// including a oneshot transmitter in the variant so the application has a way to send the frames
+/// back.  There is a fairly long story behind this buried in the docs for the [`Imp::filch`]
+/// method.
 #[derive(Debug, derive_new::new, derive_getters::Getters)]
 pub struct Imp {
     /// Holds frames for new windows.
@@ -41,7 +58,7 @@ impl Imp {
     #[tracing::instrument]
     pub async fn pause() {
         let pause: u16 = rand::random();
-        tracing::info!("Pausing for {pause} millis");
+        tracing::trace!("Pausing for {pause} millis");
         time::sleep(Duration::from_millis(pause as u64)).await;
     }
 
@@ -58,7 +75,7 @@ impl Imp {
         let frame = self.frames.pop();
         if frame.is_some() {
             let meddle = Meddle::new(Act::NewWindow, frame, format!("{}'s Window", self.name()));
-            tracing::info!("Hijinks instigated.");
+            tracing::trace!("Hijinks instigated.");
             self.tx.send(Hijinks::Meddle(meddle)).await?;
         } else {
             tracing::warn!("{} is out of frames.", self.name);
@@ -130,10 +147,10 @@ impl Imp {
         let (tx, rx) = oneshot::channel();
         let filch = Filch::new(tx);
         let hijinks = Hijinks::Filch(filch);
-        tracing::info!("{} is trash talking.", self.name());
+        tracing::trace!("{} is trash talking.", self.name());
         let _ = self.tx.send(hijinks).await;
         let frames = rx.await?;
-        tracing::info!("{} stole frames.", self.name());
+        tracing::trace!("{} stole frames.", self.name());
         self.frames = frames;
         Ok(())
     }
@@ -145,7 +162,7 @@ impl Imp {
     #[tracing::instrument(skip_all)]
     pub async fn spoil(&mut self) -> Arrive<()> {
         let meddle = Meddle::new(Act::CloseWindow, None, self.name().clone());
-        tracing::info!("Spoiler alert.");
+        tracing::trace!("Spoiler alert.");
         self.tx.send(Hijinks::Meddle(meddle)).await?;
         Ok(())
     }
@@ -281,6 +298,8 @@ pub struct Filch {
     tx: oneshot::Sender<Vec<Frame>>,
 }
 
+/// ## The Reign of the Imp King ##
+///
 /// The `ImpKing` struct manages async processes in the application.  The purpose of the `ImpKing`
 /// is to be the incompetent and unnecessary middle manager of the spiritual realm.  I say
 /// unnecessary because everything we are doing here could be done with just threads.  Even within
@@ -335,10 +354,11 @@ impl ImpKing {
         buffer: usize,
         frames: Vec<Frame>,
     ) -> Arrive<Self> {
-        let path = "/home/erik/code/tardy/data/quotes.csv";
+        let path = "data/quotes.csv";
+        // let path = "/home/erik/code/tardy/data/quotes.csv";
         let quotes = Quotes::from_path(path.into())?;
         let (tx, rx) = mpsc::channel(buffer);
-        tracing::info!("Imp King has {} quotes.", quotes.len());
+        tracing::trace!("Imp King has {} quotes.", quotes.len());
         let imp_king = Self {
             frames,
             proxy,
@@ -378,21 +398,45 @@ impl ImpKing {
         imps
     }
 
+    /// The `spawn_imps` method creates [`Imp`] instances as asyncronous processes outside the main
+    /// event loop. The purpose of this method is to delegate the work of the [`Imp`] types to an
+    /// async task, so that long-running tasks do not impede use of the main application user
+    /// interface.
+    ///
+    /// The `ImpKing` first creates the number of imps in the argument `count` using
+    /// [`ImpKing::imps`].  Then we spawn and async task using [`tokio::spawn`].  Inside the
+    /// closure, we capture the imp in a loop, where we run [`Imp::hijinks`] indefinitely, setting
+    /// the imp loose to run [`Hijinks`] on the user while being sneaky and not snagging up the GUI.
+    ///
+    /// If the [`Imp::hijinks`] process throws an error, we do not want to bubble it up any higher.
+    /// Instead we log a warning that the imp has fled and break from the loop.  This strategy is
+    /// lifted from Ch. 17 listing 17-39.
     #[tracing::instrument(skip_all)]
-    pub async fn spawn_imps(&self, count: usize) -> Arrive<()> {
-        let imps = self.imps(count);
+    pub async fn spawn_imps(imps: Vec<Imp>) -> Arrive<Vec<tokio::task::JoinHandle<()>>> {
+        let mut futures = Vec::new();
         for mut imp in imps {
-            tokio::spawn(async move {
+            let fut = tokio::spawn(async move {
                 loop {
-                    if imp.hijinks().await.is_err() {
+                    if let Err(excuse) = imp.hijinks().await {
+                        tracing::warn!(
+                            "{} is running away because {}",
+                            imp.name(),
+                            excuse.to_string()
+                        );
                         break;
                     }
                 }
             });
+            futures.push(fut);
         }
-        Ok(())
+        Ok(futures)
     }
 
+    /// The `listen` method receives [`Hijinks`] messages from [`Imp`] types and transmits them to
+    /// the main application event loop.  The purpose of this method is to pass messages from the
+    /// async background processes into the sync main event loop.
+    ///
+    /// This implementation is straight from Ch. 17 listing 17-9.
     #[tracing::instrument(skip_all)]
     pub async fn listen(&mut self) -> Arrive<()> {
         while let Some(hijinks) = self.rx.recv().await {
@@ -401,10 +445,28 @@ impl ImpKing {
         Ok(())
     }
 
+    /// One element that has hung me up so far is Ch. 17 listing 17-11.  In this example there is
+    /// little consequence from dropping my async tasks in a sloppy manner, but I have been unable
+    /// to figure out the equivalent of `trpl::join_all`. I have tried refactoring the `spawn_imps`
+    /// and `listen` methods to return futures, which gives me a vector of type
+    /// [`tokio::task::JoinHandle`] for the imps and a future of a different type for the listener.
+    /// What I ended up with looks a lot closer to the code in Ch. 17 listing 17-19.
+    ///
+    /// Having written it, I am not confident that this method is correct, because I am not sure
+    /// how to observe processes failing to get cleaned up.  When my kids leave the Legos out on
+    /// the floor, its more obvious.
     #[tracing::instrument(skip_all)]
     pub async fn reign(&mut self, count: usize) -> Arrive<()> {
-        self.spawn_imps(count).await?;
-        self.listen().await?;
+        let imps = self.imps(count);
+        let handles = ImpKing::spawn_imps(imps);
+        let listener = self.listen();
+        let (imp_res, king_res) = tokio::join!(handles, listener);
+        if let Err(blame) = imp_res {
+            tracing::warn!("Problem with imps: {blame}");
+        }
+        if let Err(blame) = king_res {
+            tracing::warn!("Probelm with Imp King: {blame}");
+        }
         Ok(())
     }
 }

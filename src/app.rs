@@ -186,7 +186,7 @@ impl App {
     ) -> Arrive<()> {
         match act {
             Act::CloseWindow => {
-                tracing::info!("Closing window.");
+                tracing::trace!("Closing window.");
                 let _ = self.windows.remove(id);
                 Ok(())
             }
@@ -255,7 +255,7 @@ impl App {
                 .available_monitors()
                 .map(|handle| handle.size())
                 .collect::<Vec<dpi::PhysicalSize<u32>>>();
-            tracing::info!("Monitors read.");
+            tracing::trace!("Monitors read.");
             Some(result)
         } else {
             tracing::warn!("No window available to measure.");
@@ -281,7 +281,7 @@ impl App {
             let values = self.windows.values().take(1).collect::<Vec<&Lens>>();
             let lens = values[0];
             let result = lens.window().outer_size();
-            tracing::info!("Window size measured.");
+            tracing::trace!("Window size measured.");
             Some(result)
         } else {
             tracing::warn!("No window available to measure.");
@@ -302,7 +302,7 @@ impl App {
     pub fn lenses(&self) -> Option<Vec<&Lens>> {
         if !self.windows.is_empty() {
             let lens = self.windows.values().collect::<Vec<&Lens>>();
-            tracing::info!("Lenses read.");
+            tracing::trace!("Lenses read.");
             Some(lens)
         } else {
             tracing::warn!("Could not read lenses.");
@@ -323,7 +323,7 @@ impl App {
     pub fn monitors(&self) -> Option<Vec<monitor::MonitorHandle>> {
         if let Some(lenses) = self.lenses() {
             let monitors = lenses[0].window().available_monitors().collect();
-            tracing::info!("Monitors read.");
+            tracing::trace!("Monitors read.");
             Some(monitors)
         } else {
             tracing::warn!("Could not read monitors.");
@@ -345,7 +345,7 @@ impl App {
         if let Some(monitors) = self.monitors() {
             let mut rng = rand::thread_rng();
             let idx = rng.gen_range(0..monitors.len());
-            tracing::info!("Monitor selected.");
+            tracing::trace!("Monitor selected.");
             Some(monitors[idx].clone())
         } else {
             tracing::warn!("Could not select monitor.");
@@ -377,7 +377,7 @@ impl App {
                 tracing::trace!("Monitor {} selected.", idx);
                 handles.push(monitors[idx].clone());
             }
-            tracing::info!("Monitors selected.");
+            tracing::trace!("Monitors selected");
             Some(handles)
         } else {
             tracing::warn!("Could not select monitors.");
@@ -399,7 +399,7 @@ impl App {
     pub fn frame(&self) -> Option<Frame> {
         if let Some(monitor) = self.random_monitor() {
             let frame = Frame::from(monitor);
-            tracing::info!("Frame created.");
+            tracing::trace!("Frame created.");
             Some(frame)
         } else {
             tracing::warn!("Could not create frame.");
@@ -425,7 +425,7 @@ impl App {
                 .into_iter()
                 .map(Frame::from)
                 .collect::<Vec<Frame>>();
-            tracing::info!("Frames created.");
+            tracing::trace!("Frames created.");
             Some(frames)
         } else {
             tracing::warn!("Could not create frames.");
@@ -455,8 +455,8 @@ impl App {
         let proxy = self.proxy.clone();
         if let Some(frames) = self.frames(FRAME_POOL) {
             tokio::spawn(async move {
-                let mut king = ImpKing::summon(proxy, 10, frames).unwrap();
-                if king.reign(10).await.is_err() {
+                let mut king = ImpKing::summon(proxy, FRAMES, frames).unwrap();
+                if king.reign(IMPS).await.is_err() {
                     tracing::warn!("Problem making hijinks.");
                 }
             });
@@ -526,6 +526,11 @@ impl App {
 ///     * No further variants of [`Act`] participate in [`Hijinks`].
 ///   * [`Hijinks::Vandalize`] - Respond by logging the contained message as an INFO level trace.
 ///   * [`Hijinks::Filch`] - Respond by sending a vector of [`Frame`] instances to the filcher.
+///
+///   As a parting sad trombone, I have not been able to figure out how to use the
+///   [`winit::monitor::MonitorHandle`] to actually build the new window in the specified monitor.
+///   So after going through all the effort of lugging the handles over here, I do not know what to
+///   do with them.  All windows will open on the primary monitor, which is not as fun.
 impl ApplicationHandler<Hijinks> for App {
     #[tracing::instrument(skip_all)]
     fn resumed(&mut self, event_loop: &event_loop::ActiveEventLoop) {
@@ -536,11 +541,11 @@ impl ApplicationHandler<Hijinks> for App {
 
     #[tracing::instrument(skip_all)]
     fn user_event(&mut self, event_loop: &event_loop::ActiveEventLoop, event: Hijinks) {
-        tracing::info!("Hijinks detected.");
+        tracing::trace!("Hijinks detected.");
         match event {
             Hijinks::Meddle(meddle) => match meddle.act() {
                 Act::CloseWindow => {
-                    tracing::info!("Close window received.");
+                    tracing::trace!("Close window received.");
                     let keys = self
                         .windows
                         .keys()
@@ -551,12 +556,12 @@ impl ApplicationHandler<Hijinks> for App {
                         let idx = rng.gen_range(0..keys.len());
                         self.windows.remove(&keys[idx]);
                     } else {
-                        tracing::info!("App refuses to close the last window.");
+                        tracing::trace!("App refuses to close the last window.");
                     }
                 }
                 Act::NewWindow => {
                     if let Some(frame) = meddle.frame() {
-                        tracing::info!("Creating window from imp.");
+                        tracing::trace!("Creating window from imp.");
                         let position = frame.position();
                         let size = frame.size();
                         let attr = window::Window::default_attributes()
@@ -708,6 +713,9 @@ pub const FRAME_POOL: usize = 100;
 
 /// The `FRAMES` constant determines the number of frames given to each [`crate::Imp`].
 pub const FRAMES: usize = 10;
+
+/// The `IMPS` constant specifies the number of [`crate::Imp`] instances created by [`ImpKing::spawn_imps`]
+pub const IMPS: usize = 10;
 
 /// The `MIN_SPAN` constant serves as both the minimum size constraint for the height and width of
 /// new windows, as well as the minimum padding between window and screen sizes.

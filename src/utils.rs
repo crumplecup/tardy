@@ -15,5 +15,5 @@ pub fn trace_init() {
         .try_init()
         .is_ok()
     {};
-    tracing::info!("Loading Tardy...");
+    tracing::trace!("Loading Tardy...");
 }
