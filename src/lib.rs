@@ -78,8 +78,9 @@
 //!   * [`Imp::instigate`]
 //!   * [`Imp::filch`]
 //!   * [`Imp::spoil`]
-//!   * [`Imp::vandalize`]
 //!   * [`Imp::meddle`]
+//!   * [`Imp::vandalize`]
+//!   * [`Imp::hijinks`]
 //! 2. The Reign of the Imp King - [`ImpKing`]
 //!   * [`Quote`]
 //!   * [`Quotes`]
@@ -95,7 +96,7 @@
 //! to 17.3!"*.  I would like to continue to implement some of the concepts discussed in later
 //! sections, in particular the composition of streams.  Before I get to this, I would like to
 //! introduce something besides empty windows, so the next update will also feature some new
-//! content.
+//! content, including some tricky new libraries.
 mod act;
 mod app;
 mod arrive;

@@ -189,7 +189,7 @@ impl Imp {
     /// because who doesn't find verbose logs annoying?
     ///
     /// I am frustrated by the lack of support for [`rand::Rng::gen_range`] in an async context.
-    /// Surely there is an anologues tool I can reach for here.  Instead, I randomly generate a
+    /// Surely there is an analogous tool I can reach for here.  Instead, I randomly generate a
     /// `u16` value using [`rand::random`].  If the value does not exceed the number of quotes, we
     /// can use it index into vector and pull a quote at random.  If the value exceeds the number
     /// of quotes, we have to roll again.  Lame!
@@ -344,8 +344,8 @@ impl ImpKing {
     /// The `buffer` argument determines the capacity of the [`mpsc::channel`] used to pass
     /// [`Hijinks`] from the [`Imp`] types back to the `ImpKing`.
     ///
-    /// First we attempt to read [`Quotes`] from the `data` directory, where there just happens to
-    /// be a files called `quotes.csv`.  We deserialize the contents using [`Quotes::from_path`].
+    /// First we attempt to read [`Quotes`] from the `data` directory, where there just so happens to
+    /// be a file called `quotes.csv`.  We deserialize the contents using [`Quotes::from_path`].
     /// We then create the [`mpsc::channel`] passing in `buffer` as the argument, so we can pass
     /// these into the new instance of `ImpKing`.
     #[tracing::instrument(skip_all)]
@@ -446,15 +446,15 @@ impl ImpKing {
     }
 
     /// One element that has hung me up so far is Ch. 17 listing 17-11.  In this example there is
-    /// little consequence from dropping my async tasks in a sloppy manner, but I have been unable
-    /// to figure out the equivalent of `trpl::join_all`. I have tried refactoring the `spawn_imps`
+    /// little consequence from dropping my async tasks in a sloppy manner, but I am unable
+    /// to use the equivalent of `trpl::join_all`. I have tried refactoring the `spawn_imps`
     /// and `listen` methods to return futures, which gives me a vector of type
     /// [`tokio::task::JoinHandle`] for the imps and a future of a different type for the listener.
     /// What I ended up with looks a lot closer to the code in Ch. 17 listing 17-19.
     ///
     /// Having written it, I am not confident that this method is correct, because I am not sure
     /// how to observe processes failing to get cleaned up.  When my kids leave the Legos out on
-    /// the floor, its more obvious.
+    /// the floor, it's more obvious.
     #[tracing::instrument(skip_all)]
     pub async fn reign(&mut self, count: usize) -> Arrive<()> {
         let imps = self.imps(count);
