@@ -1,4 +1,4 @@
-use crate::Hijinks;
+use crate::{Event, Hijinks};
 use derive_more::Error;
 
 /// The `arrive` module holds error handling types for the `tardy` crate.
@@ -46,6 +46,7 @@ pub enum Blame {
     /// The `EventLoopClosed` variant occurs when an async event tries to send a message to event
     /// loop after it has been closed.
     #[from(winit::event_loop::EventLoopClosed<Hijinks>)]
+    #[from(winit::event_loop::EventLoopClosed<Event>)]
     #[display("EventLoopClosed: {:?}", self.source())]
     EventLoopClosed,
     /// The `Excuse` variant indicates an internal library error.  
@@ -68,6 +69,7 @@ pub enum Blame {
     /// The `Tokio` variant indicates an error with the mpsc channel used to send [`Hijinks`] from
     /// [`crate::Imp`] types to the [`crate::ImpKing`].
     #[from(tokio::sync::mpsc::error::SendError<Hijinks>)]
+    #[from(tokio::sync::mpsc::error::SendError<Event>)]
     #[display("Tokio: {:?}", self.source())]
     Tokio,
 }
@@ -96,4 +98,5 @@ pub enum Excuse {
     /// The `NoFrames` variant indicates the struct does not have a frame to pop from the
     /// `frames` field.
     NoFrames,
+    NavBuilder,
 }

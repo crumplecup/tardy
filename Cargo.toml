@@ -8,21 +8,26 @@ license = "Apache-2.0"
 repository = "https://github.com/crumplecup/tardy"
 
 [dependencies]
+accesskit = "0.16.0"
+accesskit_winit = { version = "0.22.0" }
+# accesskit_winit = { version = "0.22.0", features = ["tokio"] }
 config = "0.14.0"
 convert_case = "0.6.0"
 csv = "1.3.0"
 derive-getters = "0.5.0"
-derive-new = "0.6.0"
-derive_builder = { version = "0.20.0", features = ["clippy"] }
+derive-new = "0.7.0"
+derive_builder = { version = "0.20.1", features = ["clippy"] }
 derive_more = { version = "1.0.0", features = ["full"] }
 derive_setters = "0.1.6"
-futures-util = "0.3.30"
+galileo = { git = "https://github.com/grantspassoregon/galileo" }
+galileo-types = { git = "https://github.com/grantspassoregon/galileo" }
 names = "0.14.0"
 rand = "0.8.5"
-serde = { version = "1.0.209", features = ["derive"] }
+serde = { version = "1.0.210", features = ["derive"] }
 strum = { version = "0.26.3", features = ["strum_macros"] }
 strum_macros = "0.26.4"
-tokio = { version = "1.39.3", features = ["full"] }
+tokio = { version = "1.40.0", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+wgpu = { version = "22.1.0", features = ["serde"] }
 winit = "0.30.5"

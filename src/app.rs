@@ -1,4 +1,4 @@
-use crate::{Act, Arrive, Cmd, Hijinks, ImpKing, Lens};
+use crate::{Act, Arrive, Cmd, Event, Lens, Map, Nav};
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -43,11 +43,11 @@ use winit::{
 ///
 /// The `App` struct now includes a `proxy` field holding the event loop proxy used to send events
 /// from the async process back to the sync event loop as a user event of type `Hijinks`.
-#[derive(Debug)]
 pub struct App {
     cmd: Cmd,
     config: config::Config,
-    proxy: event_loop::EventLoopProxy<Hijinks>,
+    delegate: galileo::control::EventProcessor,
+    proxy: event_loop::EventLoopProxy<Event>,
     windows: HashMap<window::WindowId, Lens>,
 }
 
@@ -73,13 +73,16 @@ impl App {
     /// and pass it to the async process, making no further use of it within `App`.  As the top
     /// level data structure, we are using `App` to carry water from `main.rs` to a place where
     /// the async workers can drink it.
-    pub fn new(proxy: event_loop::EventLoopProxy<Hijinks>) -> Self {
+    pub fn new(proxy: event_loop::EventLoopProxy<Event>) -> Self {
         let cmd = Cmd::default();
         let config = config::Config::default();
         let windows = HashMap::new();
+        let mut delegate = galileo::control::EventProcessor::default();
+        delegate.add_handler(galileo::control::MapController::default());
         let mut app = Self {
             cmd,
             config,
+            delegate,
             proxy,
             windows,
         };
@@ -102,8 +105,8 @@ impl App {
     ///
     /// Will [`crate::Blame::EventLoop`] when [`event_loop::ActiveEventLoop::create_window`] fails.
     #[tracing::instrument(skip_all)]
-    pub fn create_window(
-        &mut self,
+    pub fn request_window(
+        &self,
         event_loop: &event_loop::ActiveEventLoop,
         attributes: Option<window::WindowAttributes>,
     ) -> Arrive<()> {
@@ -113,15 +116,69 @@ impl App {
             window::Window::default_attributes()
                 .with_title("Tardy")
                 .with_transparent(true)
+                .with_visible(false)
         };
         let window = event_loop.create_window(attr)?;
+        let adapter = accesskit_winit::Adapter::with_event_loop_proxy(&window, self.proxy.clone());
+        window.set_visible(true);
         let window = Arc::new(window);
+        let proxy = self.proxy.clone();
         // Did I create a window?
         tracing::trace!("Window created: {:?}", window.id());
-        self.windows.insert(window.id(), Lens::new(window.clone()));
+        tokio::spawn(async move {
+            match Self::request_lens(adapter, proxy, window).await {
+                Ok(_) => tracing::trace!("Lens created."),
+                Err(e) => tracing::warn!("Lens not created: {}", e.to_string()),
+            }
+        });
+        Ok(())
+    }
+
+    pub async fn request_lens(
+        adapter: accesskit_winit::Adapter,
+        proxy: event_loop::EventLoopProxy<Event>,
+        window: Arc<winit::window::Window>,
+    ) -> Arrive<()> {
+        let lens = Lens::new(adapter, proxy.clone(), window).await;
+        proxy.send_event(Event::Lens(lens))?;
+        Ok(())
+    }
+
+    pub fn create_window(&mut self, lens: Lens) {
+        let id = lens.window().id();
+        self.windows.insert(id, lens);
         // How many am I up to?
         tracing::trace!("Total windows: {}", self.windows.len());
-        Ok(())
+    }
+
+    pub fn delegate(&mut self, event: &winit::event::WindowEvent, id: &winit::window::WindowId) {
+        // Phone emulator in browsers works funny with scaling, using this code fixes it.
+        // But my real phone works fine without it, so it's commented out for now, and probably
+        // should be deleted later, when we know that it's not needed on any devices.
+
+        // #[cfg(target_arch = "wasm32")]
+        // let scale = window.scale_factor();
+        //
+        // #[cfg(not(target_arch = "wasm32"))]
+        let scale = 1.0;
+
+        if let Some(lens) = self.windows.get_mut(id) {
+            let map = lens.map_mut();
+            if let Some(raw_event) = map.delegate_mut().process_user_input(event, scale) {
+                let mut content = map.content().write().expect("Poisoned lock.");
+                self.delegate.handle(raw_event, &mut content);
+            }
+            lens.window().request_redraw();
+        }
+
+        // if let Some(raw_event) = map.delegate_mut().process_user_input(event, scale) {
+        //     let mut content = map.content().write().expect("Poisoned lock.");
+        //     self.delegate.handle(raw_event, &mut content);
+        // }
+        //
+        // if let Some(lens) = self.windows.get(id) {
+        //     lens.window().request_redraw();
+        // }
     }
 
     /// The user specifies key mappings in `Tardy.toml`, as described in the docs for [`Act`].
@@ -195,7 +252,11 @@ impl App {
                 self.windows.clear();
                 Ok(())
             }
-            Act::NewWindow => self.create_window(event_loop, None),
+            Act::NewWindow => {
+                self.request_window(event_loop, None)?;
+                Ok(())
+            }
+            // self.request_window(event_loop, None),
             Act::Be => {
                 tracing::trace!("Taking it easy.");
                 Ok(())
@@ -433,37 +494,37 @@ impl App {
         }
     }
 
-    /// The `imp_king` method summons an [`ImpKing`] to instigate [`Hijinks`].  
-    ///
-    /// Calls [`App::frames`] to create a vector of valid [`Frame`] types to populate the `frames`
-    /// field of the [`ImpKing`].  Since the [`rand::Rng::gen_range`] method depends on the main
-    /// thread, we use the [`App`] struct to create frames.  Since the [`crate::Imp`] types need
-    /// access to a [`Frame`] when creating a window, we pass the frames to the [`ImpKing`], who
-    /// uses them to create [`crate::Imp`] types.
-    ///
-    /// Note that we could simply randomize new windows directly from [`App`], and passing the
-    /// [`Frame`] around is completely unnecessary overhead, like putting a brick in your backpack.
-    /// However, there are use cases like search parameters where we might need to pass more useful
-    /// packets of data from our main application out to our async worker processes, so for now
-    /// let's just pretend we need to pass around a [`Frame`] for this thing to work.  Yes, it's
-    /// contrived.
-    ///
-    /// Spawns an async process inside which we call [`ImpKing::summon`], the constructor for
-    /// [`ImpKing`].
-    #[tracing::instrument(skip_all)]
-    pub fn imp_king(&mut self) {
-        let proxy = self.proxy.clone();
-        if let Some(frames) = self.frames(FRAME_POOL) {
-            tokio::spawn(async move {
-                let mut king = ImpKing::summon(proxy, FRAMES, frames).unwrap();
-                if king.reign(IMPS).await.is_err() {
-                    tracing::warn!("Problem making hijinks.");
-                }
-            });
-        } else {
-            tracing::warn!("Could not get frames.");
-        }
-    }
+    // /// The `imp_king` method summons an [`ImpKing`] to instigate [`Hijinks`].
+    // ///
+    // /// Calls [`App::frames`] to create a vector of valid [`Frame`] types to populate the `frames`
+    // /// field of the [`ImpKing`].  Since the [`rand::Rng::gen_range`] method depends on the main
+    // /// thread, we use the [`App`] struct to create frames.  Since the [`crate::Imp`] types need
+    // /// access to a [`Frame`] when creating a window, we pass the frames to the [`ImpKing`], who
+    // /// uses them to create [`crate::Imp`] types.
+    // ///
+    // /// Note that we could simply randomize new windows directly from [`App`], and passing the
+    // /// [`Frame`] around is completely unnecessary overhead, like putting a brick in your backpack.
+    // /// However, there are use cases like search parameters where we might need to pass more useful
+    // /// packets of data from our main application out to our async worker processes, so for now
+    // /// let's just pretend we need to pass around a [`Frame`] for this thing to work.  Yes, it's
+    // /// contrived.
+    // ///
+    // /// Spawns an async process inside which we call [`ImpKing::summon`], the constructor for
+    // /// [`ImpKing`].
+    // #[tracing::instrument(skip_all)]
+    // pub fn imp_king(&mut self) {
+    //     let proxy = self.proxy.clone();
+    //     if let Some(frames) = self.frames(FRAME_POOL) {
+    //         tokio::spawn(async move {
+    //             let mut king = ImpKing::summon(proxy, FRAMES, frames).unwrap();
+    //             if king.reign(IMPS).await.is_err() {
+    //                 tracing::warn!("Problem making hijinks.");
+    //             }
+    //         });
+    //     } else {
+    //         tracing::warn!("Could not get frames.");
+    //     }
+    // }
 }
 
 /// The impl for `ApplicationHandler` is boiled down to as little as possible.
@@ -531,59 +592,80 @@ impl App {
 ///   [`winit::monitor::MonitorHandle`] to actually build the new window in the specified monitor.
 ///   So after going through all the effort of lugging the handles over here, I do not know what to
 ///   do with them.  All windows will open on the primary monitor, which is not as fun.
-impl ApplicationHandler<Hijinks> for App {
+impl ApplicationHandler<Event> for App {
     #[tracing::instrument(skip_all)]
     fn resumed(&mut self, event_loop: &event_loop::ActiveEventLoop) {
-        self.create_window(event_loop, None)
-            .expect("Could not create window.");
-        self.imp_king();
+        self.request_window(event_loop, None)
+            .expect("Could not request window.");
+        // self.imp_king();
     }
 
     #[tracing::instrument(skip_all)]
-    fn user_event(&mut self, event_loop: &event_loop::ActiveEventLoop, event: Hijinks) {
-        tracing::trace!("Hijinks detected.");
+    fn user_event(&mut self, event_loop: &event_loop::ActiveEventLoop, event: Event) {
+        // tracing::info!("Event detected: {:?}", event);
         match event {
-            Hijinks::Meddle(meddle) => match meddle.act() {
-                Act::CloseWindow => {
-                    tracing::trace!("Close window received.");
-                    let keys = self
-                        .windows
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<window::WindowId>>();
-                    if keys.len() > 1 {
-                        let mut rng = rand::thread_rng();
-                        let idx = rng.gen_range(0..keys.len());
-                        self.windows.remove(&keys[idx]);
-                    } else {
-                        tracing::trace!("App refuses to close the last window.");
-                    }
+            Event::Access(access) => match access.window_event {
+                accesskit_winit::WindowEvent::InitialTreeRequested => {
+                    let id = access.window_id;
+                    let window = match self.windows.get_mut(&id) {
+                        Some(window) => window,
+                        None => return,
+                    };
+                    let tree = Nav::intro();
+                    window.adapter.update_if_active(|| tree.initial_tree())
                 }
-                Act::NewWindow => {
-                    if let Some(frame) = meddle.frame() {
-                        tracing::trace!("Creating window from imp.");
-                        let position = frame.position();
-                        let size = frame.size();
-                        let attr = window::Window::default_attributes()
-                            .with_title(meddle.title())
-                            .with_transparent(true)
-                            .with_position(*position)
-                            .with_inner_size(*size);
-                        self.create_window(event_loop, Some(attr)).unwrap();
-                    } else {
-                        tracing::warn!("New window invocations should always include a frame.");
-                    }
-                }
-                _ => tracing::warn!("Imps can't send this type of act."),
+                accesskit_winit::WindowEvent::ActionRequested(accesskit::ActionRequest {
+                    action,
+                    target,
+                    ..
+                }) => {}
+                accesskit_winit::WindowEvent::AccessibilityDeactivated => {}
             },
-            Hijinks::Vandalize(msg) => tracing::info!(msg),
-            Hijinks::Filch(filch) => {
-                if let Some(frames) = self.frames(FRAMES) {
-                    let tx = filch.dissolve();
-                    tx.send(frames).unwrap();
-                }
-            }
+            Event::Lens(lens) => self.create_window(lens),
         }
+        // tracing::trace!("Hijinks detected.");
+        // match event {
+        //     Hijinks::Meddle(meddle) => match meddle.act() {
+        //         Act::CloseWindow => {
+        //             tracing::trace!("Close window received.");
+        //             let keys = self
+        //                 .windows
+        //                 .keys()
+        //                 .cloned()
+        //                 .collect::<Vec<window::WindowId>>();
+        //             if keys.len() > 1 {
+        //                 let mut rng = rand::thread_rng();
+        //                 let idx = rng.gen_range(0..keys.len());
+        //                 self.windows.remove(&keys[idx]);
+        //             } else {
+        //                 tracing::trace!("App refuses to close the last window.");
+        //             }
+        //         }
+        //         Act::NewWindow => {
+        //             if let Some(frame) = meddle.frame() {
+        //                 tracing::trace!("Creating window from imp.");
+        //                 let position = frame.position();
+        //                 let size = frame.size();
+        //                 let attr = window::Window::default_attributes()
+        //                     .with_title(meddle.title())
+        //                     .with_transparent(true)
+        //                     .with_position(*position)
+        //                     .with_inner_size(*size);
+        //                 self.create_window(event_loop, Some(attr)).unwrap();
+        //             } else {
+        //                 tracing::warn!("New window invocations should always include a frame.");
+        //             }
+        //         }
+        //         _ => tracing::warn!("Imps can't send this type of act."),
+        //     },
+        //     Hijinks::Vandalize(msg) => tracing::info!(msg),
+        //     Hijinks::Filch(filch) => {
+        //         if let Some(frames) = self.frames(FRAMES) {
+        //             let tx = filch.dissolve();
+        //             tx.send(frames).unwrap();
+        //         }
+        //     }
+        // }
     }
 
     #[tracing::instrument(skip_all)]
@@ -597,6 +679,9 @@ impl ApplicationHandler<Hijinks> for App {
             Some(window) => window,
             None => return,
         };
+        let win = window.window().clone();
+
+        window.adapter.process_event(&win, &event);
 
         match event {
             WindowEvent::CloseRequested => {
@@ -615,6 +700,19 @@ impl ApplicationHandler<Hijinks> for App {
                 };
             }
             WindowEvent::RedrawRequested => {
+                match window.render() {
+                    Ok(_) => {}
+                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                        window.resize(window.size)
+                    }
+                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                        tracing::info!("Set exit flag here.");
+                        // ewlt.exit(),
+                    }
+                    Err(wgpu::SurfaceError::Timeout) => {
+                        // Ignore timeouts.
+                    }
+                };
                 // I left these comments in from the example to remind me to put some cool stuff
                 // here later.
                 //
@@ -636,16 +734,26 @@ impl ApplicationHandler<Hijinks> for App {
                     window.with_refresh(false);
                 }
             }
-            _ => (),
+            WindowEvent::Resized(physical_size) => {
+                window.resize(physical_size);
+            }
+            other => {
+                let id = window.window().id();
+                self.delegate(&other, &id);
+            }
         }
     }
 
     #[tracing::instrument(skip_all)]
     fn about_to_wait(&mut self, event_loop: &event_loop::ActiveEventLoop) {
-        if self.windows.is_empty() {
-            tracing::trace!("No windows left, exiting...");
-            event_loop.exit();
-        }
+        self.windows
+            .values_mut()
+            .map(|lens| lens.about_to_wait())
+            .for_each(drop);
+        // if self.windows.is_empty() {
+        //     tracing::trace!("No windows left, exiting...");
+        //     event_loop.exit();
+        // }
     }
 }
 
